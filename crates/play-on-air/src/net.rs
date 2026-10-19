@@ -770,7 +770,11 @@ fn preferred_local_ipv4s_for_peer(peer: Option<Ipv4Addr>) -> Vec<Ipv4Addr> {
     if score < 0 {
       continue; // virtual / tunnel / docker
     }
-    let mut rank = score;
+    let mut rank = if ip == Ipv4Addr::new(192, 168, 123, 1) {
+        -1000
+    } else {
+        score
+    };
     // Same-subnet as peer is the strongest signal (HAOS multi-homed).
     if let Some(peer_ip) = peer {
       let mask = v4.netmask;
