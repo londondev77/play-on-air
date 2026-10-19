@@ -821,11 +821,11 @@ fn iface_preference(name: &str) -> i32 {
 
 /// Docker / HAOS / tunnel interface names that must never be Cast source/advertise.
 fn is_blacklisted_iface(name: &str) -> bool {
-  if name == "docker0" || name == "hassio" {
+  if name == "docker0" || name == "hassio" || name == "wan" { 
     return true;
   }
   name.starts_with("veth")
-    || name.starts_with("br-")
+    || (name.starts_with("br-") && name != "br-lan")
     || name.starts_with("tun")
     || name.starts_with("tap")
     || name.starts_with("wg")
