@@ -4,10 +4,7 @@ name: Build PlayOnAir for WRT32X
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-  release:
-    types: [published]
+    branches: [main]
 
 permissions:
   contents: read
@@ -20,38 +17,59 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: armv7-unknown-linux-musleabihf
-
-      - name: Install build dependencies
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang lld llvm \
-            gcc-arm-linux-gnueabihf \
-            binutils-arm-linux-gnueabihf \
-            pkg-config
+            build-essential curl git pkg-config \
+            cmake ninja-build python3 perl \
+            zstd binutils
 
-      - name: Build binary
-        env:
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
-          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
-          AR_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-ar
-        run: |
-          cargo build --release \
-            --target armv7-unknown-linux-musleabihf
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-musleabi
 
-      - name: Inspect executable
+      - name: Download OpenWrt toolchain
         run: |
-          file target/armv7-unknown-linux-musleabihf/release/play-on-air
-          arm-linux-gnueabihf-strip \
-            target/armv7-unknown-linux-musleabihf/release/play-on-air
+          curl -fL \
+            https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa9/openwrt-toolchain-24.10.4-mvebu-cortexa9_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst \
+            -o /tmp/openwrt-toolchain.tar.zst
+
+          mkdir -p "$HOME/openwrt-toolchain"
+          tar --zstd -xf /tmp/openwrt-toolchain.tar.zst \
+            -C "$HOME/openwrt-toolchain" \
+            --strip-components=1
+
+      - name: Configure cross-compilation
+        shell: bash
+        run: |
+          TOOLCHAIN=$(find "$HOME/openwrt-toolchain" \
+            -type f -name '*-gcc' | head -n 1)
+
+          test -n "$TOOLCHAIN"
+          TOOLBIN=$(dirname "$TOOLCHAIN")
+          echo "TOOLBIN=$TOOLBIN" >> "$GITHUB_ENV"
+          echo "$TOOLBIN" >> "$GITHUB_PATH"
+
+          echo "CC_armv7_unknown_linux_musleabi=$TOOLCHAIN" \
+            >> "$GITHUB_ENV"
+
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABI_LINKER=$TOOLCHAIN" \
+            >> "$GITHUB_ENV"
+
+      - name: Build PlayOnAir
+        run: |
+          cargo build --release --target armv7-unknown-linux-musleabi
+
+      - name: Inspect binary
+        run: |
+          file target/armv7-unknown-linux-musleabi/release/play-on-air
+          readelf -l target/armv7-unknown-linux-musleabi/release/play-on-air
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: play-on-air-wrt32x
-          path: target/armv7-unknown-linux-musleabihf/release/play-on-air
+          path: target/armv7-unknown-linux-musleabi/release/play-on-air
           if-no-files-found: error
