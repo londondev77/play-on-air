@@ -4,7 +4,8 @@ name: Build PlayOnAir for WRT32X
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -17,59 +18,68 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install build tools
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential curl git pkg-config \
-            cmake ninja-build python3 perl \
-            zstd binutils
+            build-essential \
+            curl \
+            pkg-config \
+            cmake \
+            ninja-build \
+            perl \
+            python3 \
+            binutils
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: armv7-unknown-linux-musleabi
+          targets: armv7-unknown-linux-musleabihf
 
-      - name: Download OpenWrt toolchain
+      - name: Install ARM musl cross-compiler
         run: |
           curl -fL \
-            https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa9/openwrt-toolchain-24.10.4-mvebu-cortexa9_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst \
-            -o /tmp/openwrt-toolchain.tar.zst
+            https://musl.cc/arm-linux-musleabihf-cross.tgz \
+            -o /tmp/arm-cross.tgz
 
-          mkdir -p "$HOME/openwrt-toolchain"
-          tar --zstd -xf /tmp/openwrt-toolchain.tar.zst \
-            -C "$HOME/openwrt-toolchain" \
-            --strip-components=1
+          mkdir -p "$HOME/arm-cross"
+          tar -xzf /tmp/arm-cross.tgz \
+            -C "$HOME/arm-cross"
+
+          echo "$HOME/arm-cross/arm-linux-musleabihf-cross/bin" \
+            >> "$GITHUB_PATH"
 
       - name: Configure cross-compilation
-        shell: bash
         run: |
-          TOOLCHAIN=$(find "$HOME/openwrt-toolchain" \
-            -type f -name '*-gcc' | head -n 1)
-
-          test -n "$TOOLCHAIN"
-          TOOLBIN=$(dirname "$TOOLCHAIN")
-          echo "TOOLBIN=$TOOLBIN" >> "$GITHUB_ENV"
-          echo "$TOOLBIN" >> "$GITHUB_PATH"
-
-          echo "CC_armv7_unknown_linux_musleabi=$TOOLCHAIN" \
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc" \
             >> "$GITHUB_ENV"
 
-          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABI_LINKER=$TOOLCHAIN" \
+          echo "CC_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-gcc" \
+            >> "$GITHUB_ENV"
+
+          echo "AR_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-ar" \
             >> "$GITHUB_ENV"
 
       - name: Build PlayOnAir
         run: |
-          cargo build --release --target armv7-unknown-linux-musleabi
+          cargo build --release \
+            --target armv7-unknown-linux-musleabihf
 
       - name: Inspect binary
         run: |
-          file target/armv7-unknown-linux-musleabi/release/play-on-air
-          readelf -l target/armv7-unknown-linux-musleabi/release/play-on-air
+          BINARY=target/armv7-unknown-linux-musleabihf/release/play-on-air
+
+          test -f "$BINARY"
+          file "$BINARY"
+          readelf -h "$BINARY"
+          readelf -l "$BINARY"
+
+          arm-linux-musleabihf-strip "$BINARY"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: play-on-air-wrt32x
-          path: target/armv7-unknown-linux-musleabi/release/play-on-air
+          path: target/armv7-unknown-linux-musleabihf/release/play-on-air
           if-no-files-found: error
+          retention-days: 30
