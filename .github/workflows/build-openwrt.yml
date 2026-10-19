@@ -1,0 +1,57 @@
+
+name: Build PlayOnAir for WRT32X
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-musleabihf
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang lld llvm \
+            gcc-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf \
+            pkg-config
+
+      - name: Build binary
+        env:
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
+          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          AR_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-ar
+        run: |
+          cargo build --release \
+            --target armv7-unknown-linux-musleabihf
+
+      - name: Inspect executable
+        run: |
+          file target/armv7-unknown-linux-musleabihf/release/play-on-air
+          arm-linux-gnueabihf-strip \
+            target/armv7-unknown-linux-musleabihf/release/play-on-air
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-on-air-wrt32x
+          path: target/armv7-unknown-linux-musleabihf/release/play-on-air
+          if-no-files-found: error
