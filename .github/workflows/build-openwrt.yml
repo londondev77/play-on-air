@@ -29,36 +29,67 @@ jobs:
             ninja-build \
             perl \
             python3 \
-            binutils
+            binutils \
+            xz-utils
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: armv7-unknown-linux-musleabihf
 
-      - name: Install ARM musl cross-compiler
+      - name: Download ARMv7 musl toolchain
+        shell: bash
         run: |
-          curl -fL \
-            https://musl.cc/arm-linux-musleabihf-cross.tgz \
-            -o /tmp/arm-cross.tgz
+          set -euo pipefail
+
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/cross-tools/musl-cross/releases/download/20260515/armv7-unknown-linux-musleabihf.tar.xz \
+            -o /tmp/arm-cross.tar.xz
 
           mkdir -p "$HOME/arm-cross"
-          tar -xzf /tmp/arm-cross.tgz \
+
+          tar -xJf /tmp/arm-cross.tar.xz \
             -C "$HOME/arm-cross"
 
-          echo "$HOME/arm-cross/arm-linux-musleabihf-cross/bin" \
-            >> "$GITHUB_PATH"
+          echo "Extracted toolchain files:"
+          find "$HOME/arm-cross" -name '*-gcc' -print
 
       - name: Configure cross-compilation
+        shell: bash
         run: |
-          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc" \
+          set -euo pipefail
+
+          TOOLCHAIN=$(find "$HOME/arm-cross" \
+            -name 'armv7-unknown-linux-musleabihf-gcc' \
+            -print -quit)
+
+          if [ -z "$TOOLCHAIN" ]; then
+            echo "ARMv7 cross-compiler not found"
+            find "$HOME/arm-cross" -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          TOOLBIN=$(dirname "$TOOLCHAIN")
+          AR="${TOOLCHAIN%-gcc}-ar"
+
+          test -x "$TOOLCHAIN"
+          test -x "$AR"
+
+          echo "$TOOLBIN" >> "$GITHUB_PATH"
+
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=$TOOLCHAIN" \
             >> "$GITHUB_ENV"
 
-          echo "CC_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-gcc" \
+          echo "CC_armv7_unknown_linux_musleabihf=$TOOLCHAIN" \
             >> "$GITHUB_ENV"
 
-          echo "AR_armv7_unknown_linux_musleabihf=arm-linux-musleabihf-ar" \
+          echo "AR_armv7_unknown_linux_musleabihf=$AR" \
             >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=armv7-unknown-linux-musleabihf-" \
+            >> "$GITHUB_ENV"
+
+          "$TOOLCHAIN" --version
 
       - name: Build PlayOnAir
         run: |
@@ -66,15 +97,19 @@ jobs:
             --target armv7-unknown-linux-musleabihf
 
       - name: Inspect binary
+        shell: bash
         run: |
-          BINARY=target/armv7-unknown-linux-musleabihf/release/play-on-air
+          set -euo pipefail
+
+          BINARY="target/armv7-unknown-linux-musleabihf/release/play-on-air"
 
           test -f "$BINARY"
+
           file "$BINARY"
           readelf -h "$BINARY"
           readelf -l "$BINARY"
 
-          arm-linux-musleabihf-strip "$BINARY"
+          armv7-unknown-linux-musleabihf-strip "$BINARY"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
