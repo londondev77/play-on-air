@@ -770,11 +770,7 @@ fn preferred_local_ipv4s_for_peer(peer: Option<Ipv4Addr>) -> Vec<Ipv4Addr> {
     if score < 0 {
       continue; // virtual / tunnel / docker
     }
-    let mut rank = if ip == Ipv4Addr::new(192, 168, 123, 1) {
-        -1000
-    } else {
-        score
-    };
+    let mut rank = score;
     // Same-subnet as peer is the strongest signal (HAOS multi-homed).
     if let Some(peer_ip) = peer {
       let mask = v4.netmask;
@@ -807,9 +803,9 @@ fn iface_preference(name: &str) -> i32 {
   if name == "en0" || name == "eth0" || name == "end0" {
     return 0; // primary Wi‑Fi / Ethernet (macOS + common Linux/HAOS)
   }
-  if name.starts_with("en") || name.starts_with("eth") || name.starts_with("end") {
+  if name.starts_with("en") || name.starts_with("eth") || name.starts_with("end") || name.starts_with("br-lan") {
     // Secondary physical NICs (Thunderbolt/dock often share subnet poorly).
-    if name == "en7" || name == "en8" || name == "en9" {
+    if name == "en7" || name == "en8" || name == "en9" || name=="br-lan" {
       return 50;
     }
     return 10;
@@ -817,7 +813,7 @@ fn iface_preference(name: &str) -> i32 {
   if name.starts_with("wlan") || name.starts_with("wlp") {
     return 5;
   }
-  if name.starts_with("bridge") || name.starts_with("vmenet") || name.starts_with("utun") || name.starts_with("awdl") {
+  if name.starts_with("bridge") || name.starts_with("vmenet") || name.starts_with("utun") || name.starts_with("awdl") || name.starts_with("lo") {
     return -1;
   }
   40
@@ -825,15 +821,16 @@ fn iface_preference(name: &str) -> i32 {
 
 /// Docker / HAOS / tunnel interface names that must never be Cast source/advertise.
 fn is_blacklisted_iface(name: &str) -> bool {
-  if name == "docker0" || name == "hassio" || name == "wan" { 
+  if name == "docker0" || name == "hassio" {
     return true;
   }
   name.starts_with("veth")
-    || (name.starts_with("br-") && name != "br-lan")
+    || name.starts_with("wan")
     || name.starts_with("tun")
     || name.starts_with("tap")
     || name.starts_with("wg")
     || name.starts_with("tailscale")
+    || name.starts_with("Wireguard")
 }
 
 /// IPv4 of the default-route interface on Linux (`/proc/net/route`); `None` elsewhere.
