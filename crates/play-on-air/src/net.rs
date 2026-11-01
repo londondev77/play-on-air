@@ -762,7 +762,7 @@ fn iface_preference(name: &str) -> i32 {
   if is_blacklisted_iface(name) {
     return -1;
   }
-  if name == "en0" || name == "eth0" || name == "end0" {
+  if name == "en0" || name == "eth0" || name == "end0" || name == "br-lan" {
     return 0; // primary Wi‑Fi / Ethernet (macOS + common Linux/HAOS)
   }
   if name.starts_with("en") || name.starts_with("eth") || name.starts_with("end") {
@@ -787,7 +787,7 @@ fn is_blacklisted_iface(name: &str) -> bool {
     return true;
   }
   name.starts_with("veth")
-    || name.starts_with("br-")
+    //|| name.starts_with("br-")
     || name.starts_with("tun")
     || name.starts_with("tap")
     || name.starts_with("wg")

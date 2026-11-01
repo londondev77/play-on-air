@@ -1,0 +1,120 @@
+
+name: Build PlayOnAir for WRT32X
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            pkg-config \
+            cmake \
+            ninja-build \
+            perl \
+            python3 \
+            binutils \
+            xz-utils
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-musleabihf
+
+      - name: Download ARMv7 musl toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/cross-tools/musl-cross/releases/download/20260515/armv7-unknown-linux-musleabihf.tar.xz \
+            -o /tmp/arm-cross.tar.xz
+
+          mkdir -p "$HOME/arm-cross"
+
+          tar -xJf /tmp/arm-cross.tar.xz \
+            -C "$HOME/arm-cross"
+
+          echo "Extracted toolchain files:"
+          find "$HOME/arm-cross" -name '*-gcc' -print
+
+      - name: Configure cross-compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOOLCHAIN=$(find "$HOME/arm-cross" \
+            -name 'armv7-unknown-linux-musleabihf-gcc' \
+            -print -quit)
+
+          if [ -z "$TOOLCHAIN" ]; then
+            echo "ARMv7 cross-compiler not found"
+            find "$HOME/arm-cross" -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          TOOLBIN=$(dirname "$TOOLCHAIN")
+          AR="${TOOLCHAIN%-gcc}-ar"
+
+          test -x "$TOOLCHAIN"
+          test -x "$AR"
+
+          echo "$TOOLBIN" >> "$GITHUB_PATH"
+
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=$TOOLCHAIN" \
+            >> "$GITHUB_ENV"
+
+          echo "CC_armv7_unknown_linux_musleabihf=$TOOLCHAIN" \
+            >> "$GITHUB_ENV"
+
+          echo "AR_armv7_unknown_linux_musleabihf=$AR" \
+            >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=armv7-unknown-linux-musleabihf-" \
+            >> "$GITHUB_ENV"
+
+          "$TOOLCHAIN" --version
+
+      - name: Build PlayOnAir
+        run: |
+          cargo build --release \
+            --target armv7-unknown-linux-musleabihf
+
+      - name: Inspect binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BINARY="target/armv7-unknown-linux-musleabihf/release/play-on-air"
+
+          test -f "$BINARY"
+
+          file "$BINARY"
+          readelf -h "$BINARY"
+          readelf -l "$BINARY"
+
+          armv7-unknown-linux-musleabihf-strip "$BINARY"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-on-air-wrt32x
+          path: target/armv7-unknown-linux-musleabihf/release/play-on-air
+          if-no-files-found: error
+          retention-days: 30
