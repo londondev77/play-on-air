@@ -19,6 +19,8 @@ use rust_cast::channels::media::{
 };
 
 use crate::error::{Error, Result};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// Content type for lossless FLAC Cast media.
 pub const CONTENT_TYPE_FLAC: &str = "audio/flac";
@@ -250,6 +252,18 @@ pub fn media_session_from_status(
 pub trait CastControl: Send + Sync + std::fmt::Debug {
   /// LOAD media (launching or joining the Default Media Receiver).
   fn load(&self, key: &str, request: MediaLoadRequest) -> Result<ActiveCastSession>;
+  /// LOAD using the session's live track value when the worker executes the command.
+  ///
+  /// This prevents a re-LOAD queued behind a metadata update from using an earlier snapshot.
+  /// Implementations without a worker queue may use the supplied value immediately.
+  fn load_with_track(
+    &self,
+    key: &str,
+    request: MediaLoadRequest,
+    track: Arc<Mutex<CastTrack>>,
+  ) -> Result<ActiveCastSession> {
+    self.load(key, request.with_track(track.lock().clone()))
+  }
   /// Set receiver volume (`0.0..=1.0`).
   fn set_volume(&self, key: &str, level: f32) -> Result<()>;
   /// Read receiver volume (`0.0..=1.0`; muted is `0.0`).
