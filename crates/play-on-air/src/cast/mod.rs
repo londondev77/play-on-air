@@ -181,6 +181,9 @@ impl MediaLoadRequest {
       "type": "QUEUE_UPDATE",
       "requestId": request_id,
       "mediaSessionId": media_session_id,
+      // Explicitly keep this item selected while replacing its metadata. Some receivers
+      // otherwise acknowledge the queue edit without refreshing the active item status.
+      "currentItemId": item_id,
       "items": [{
         "itemId": item_id,
         "media": {
@@ -345,6 +348,7 @@ mod tests {
         "type": "QUEUE_UPDATE",
         "requestId": 9,
         "mediaSessionId": 4,
+        "currentItemId": 1,
         "items": [{
           "itemId": 1,
           "media": {
