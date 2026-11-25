@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - fixes_for_track_info
 
 permissions:
   contents: read
