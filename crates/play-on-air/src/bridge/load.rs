@@ -21,6 +21,7 @@ struct ReloadPlan {
   pool: Arc<dyn CastControl>,
   route: Arc<CastRoute>,
   request: MediaLoadRequest,
+  track: Arc<Mutex<CastTrack>>,
   volume: LoadVolumePolicy,
   alive: Arc<AtomicBool>,
   late_stop_allowed: Arc<AtomicBool>,
@@ -140,6 +141,23 @@ pub(super) fn cast_load_media(
   Ok(session)
 }
 
+/// LOAD using the live session track, resolved by the Cast worker immediately before wire send.
+fn cast_load_media_with_track(
+  pool: &dyn CastControl,
+  route: &CastRoute,
+  request: MediaLoadRequest,
+  track: Arc<Mutex<CastTrack>>,
+  volume: LoadVolumePolicy,
+) -> Result<crate::cast::MediaSessionRef> {
+  let session = pool.load_with_track(&route.media(), request, track)?;
+  if let Some(level) = volume_after_load(volume)
+    && let Err(err) = pool.set_volume(&route.volume(), level)
+  {
+    tracing::debug!(error = %err, "post-load Cast volume set failed");
+  }
+  Ok(session)
+}
+
 /// Abort + join any prior in-flight LOAD so a new publish cannot race a detached handle.
 async fn join_prior_inflight_load(inflight_load: &Mutex<Option<tokio::task::JoinHandle<()>>>, device_id: &str) {
   let prior = inflight_load.lock().take();
@@ -196,7 +214,7 @@ pub(super) fn spawn_rollover_reload_loop(
           let load_pool = Arc::clone(&pool);
           let load_route = Arc::clone(&route);
           let url = stream_url.clone();
-          let load_track = track.lock().clone();
+          let load_track = Arc::clone(&track);
           let last_volume = *last_volume_linear.lock();
           let alive = Arc::clone(&session_alive);
           let late_stop = Arc::clone(&late_stop_allowed);
@@ -220,10 +238,11 @@ pub(super) fn spawn_rollover_reload_loop(
               break;
             }
             let load_task = tokio::task::spawn_blocking(move || {
-              let result = cast_load_media(
+              let result = cast_load_media_with_track(
                 load_pool.as_ref(),
                 &load_route,
-                MediaLoadRequest::wav(url, CastStreamKind::Buffered).with_track(load_track),
+                MediaLoadRequest::wav(url, CastStreamKind::Buffered),
+                load_track,
                 LoadVolumePolicy::Rollover { last_volume },
               );
               // Late LOAD after full end: STOP so playback cannot revive against a dead HTTP server.
@@ -366,12 +385,14 @@ impl Bridge {
         EgressKind::FlacLive => MediaLoadRequest::flac(session.stream_url.clone(), CastStreamKind::Live),
         EgressKind::WavBuffered => MediaLoadRequest::wav(session.stream_url.clone(), CastStreamKind::Buffered),
       }
-      .with_track(session.track.lock().clone());
+      ;
+      let track = Arc::clone(&session.track);
       let last_volume = *session.last_volume_linear.lock();
       let plan = ReloadPlan {
         pool: Arc::clone(&session.pool),
         route: Arc::clone(&session.route),
         request,
+        track,
         volume: LoadVolumePolicy::Rollover { last_volume },
         alive: Arc::clone(&session.session_alive),
         late_stop_allowed: Arc::clone(&session.late_stop_allowed),
@@ -388,6 +409,7 @@ impl Bridge {
       pool,
       route,
       request,
+      track,
       volume,
       alive,
       late_stop_allowed,
@@ -476,7 +498,7 @@ impl Bridge {
           let _sent = result_tx.send(LoadAttempt::Paused);
           return;
         }
-        let result = cast_load_media(pool.as_ref(), &route, request, volume);
+        let result = cast_load_media_with_track(pool.as_ref(), &route, request, track, volume);
         // If pause landed during LOAD, treat success as late and STOP (B1/B2).
         if paused_flag.load(Ordering::Acquire) {
           let _ok = pool.stop_best_effort(&id, Duration::from_secs(2));
