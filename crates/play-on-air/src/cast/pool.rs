@@ -1518,26 +1518,56 @@ impl WorkerState {
 
   /// Send the new now-playing metadata as a `QUEUE_UPDATE` of the playing item.
   fn handle_update_metadata(&mut self, track: CastTrack) {
-    let Some(load) = self.last_load.as_mut() else {
+    let Some(load) = self.last_load.as_ref() else {
       return;
     };
     if load.track == track {
       return;
     }
-    load.track = track;
-    let Some(session) = &self.active else {
+
+    // Keep the latest sender metadata for a future LOAD if there is no live Cast session.
+    let Some(session) = self.active.clone() else {
+      if let Some(load) = self.last_load.as_mut() {
+        load.track = track;
+      }
       return;
     };
-    let Some(item_id) = session.queue_item_id else {
+    let Some(device) = self.device.as_ref() else {
+      if let Some(load) = self.last_load.as_mut() {
+        load.track = track;
+      }
+      return;
+    };
+
+    // The item id captured from LOAD can become stale as the receiver advances its queue.
+    // Ask the receiver which item is current now, and only fall back to the LOAD snapshot
+    // when the status request itself fails (rather than when it reports no current item).
+    let item_id = match device.media.get_status(&session.transport_id, Some(session.media_session_id)) {
+      Ok(status) => status
+        .entries
+        .iter()
+        .find(|entry| entry.media_session_id == session.media_session_id)
+        .and_then(|entry| entry.current_item_id.map(i32::from)),
+      Err(err) => {
+        tracing::debug!(
+          device_id = %self.device_id,
+          error = %err,
+          "Cast current item refresh failed; using LOAD item id for metadata update"
+        );
+        session.queue_item_id
+      },
+    };
+    let Some(item_id) = item_id else {
       tracing::debug!(
         device_id = %self.device_id,
-        "Cast LOAD reported no queue item id; metadata applies on the next LOAD"
+        media_session_id = session.media_session_id,
+        "Cast status has no current queue item; deferring metadata update"
       );
       return;
     };
-    let (Some(device), Some(request)) = (self.device.as_ref(), self.last_load.as_ref()) else {
-      return;
-    };
+
+    let mut request = load.clone();
+    request.track = track.clone();
     let media_session_id = session.media_session_id;
     let request_id = device.message_manager.generate_request_id().get();
     let body = request.queue_update_payload(request_id, media_session_id, item_id);
@@ -1561,6 +1591,12 @@ impl WorkerState {
     // The MEDIA_STATUS reply is left for the idle drain (it also feeds play/pause attribution).
     match device.message_manager.send(message) {
       Ok(()) => {
+        if let Some(load) = self.last_load.as_mut() {
+          load.track = track;
+        }
+        if let Some(active) = self.active.as_mut() {
+          active.queue_item_id = Some(item_id);
+        }
         tracing::debug!(
           device_id = %self.device_id,
           request_id,
