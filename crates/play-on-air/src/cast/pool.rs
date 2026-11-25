@@ -462,6 +462,8 @@ enum CastWorkerCmd {
   /// success cannot install `active` (and must STOP the orphaned media session).
   Load {
     request: MediaLoadRequest,
+    /// Resolve metadata on the worker immediately before sending LOAD.
+    track: Option<Arc<Mutex<CastTrack>>>,
     reply: SyncSender<Result<ActiveCastSession>>,
     abandoned: Arc<AtomicBool>,
   },
@@ -815,29 +817,18 @@ impl CastPool {
     }
   }
 
-  fn cmd_tx(&self, device_id: &str) -> Result<mpsc::Sender<CastWorkerCmd>> {
-    let guard = self.workers.lock();
-    guard
-      .get(device_id)
-      .map(|h| h.cmd_tx.clone())
-      .ok_or_else(|| Error::Cast(format!("no warm Cast worker for {device_id}")))
-  }
-}
-
-impl CastControl for CastPool {
-  /// LOAD media on the warm control plane for `device_id`.
-  ///
-  /// Blocks up to [`COMMAND_TIMEOUT`]. If the warm TCP is dead, the worker tries
-  /// reconnect with backoff before failing the command.
-  ///
-  /// On timeout the caller marks the op abandoned: a late worker success must STOP
-  /// the session and must not leave `active` installed (B1).
-  fn load(&self, device_id: &str, request: MediaLoadRequest) -> Result<ActiveCastSession> {
+  fn load_request(
+    &self,
+    device_id: &str,
+    request: MediaLoadRequest,
+    track: Option<Arc<Mutex<CastTrack>>>,
+  ) -> Result<ActiveCastSession> {
     let tx = self.cmd_tx(device_id)?;
     let (reply_tx, reply_rx) = mpsc::sync_channel(1);
     let abandoned = Arc::new(AtomicBool::new(false));
     tx.send(CastWorkerCmd::Load {
       request,
+      track,
       reply: reply_tx,
       abandoned: Arc::clone(&abandoned),
     })
@@ -856,6 +847,36 @@ impl CastControl for CastPool {
         Err(Error::Cast(format!("warm Cast load reply dropped for {device_id}")))
       },
     }
+  }
+
+  fn cmd_tx(&self, device_id: &str) -> Result<mpsc::Sender<CastWorkerCmd>> {
+    let guard = self.workers.lock();
+    guard
+      .get(device_id)
+      .map(|h| h.cmd_tx.clone())
+      .ok_or_else(|| Error::Cast(format!("no warm Cast worker for {device_id}")))
+  }
+}
+
+impl CastControl for CastPool {
+  /// LOAD media on the warm control plane for `device_id`.
+  ///
+  /// Blocks up to [`COMMAND_TIMEOUT`]. If the warm TCP is dead, the worker tries
+  /// reconnect with backoff before failing the command.
+  ///
+  /// On timeout the caller marks the op abandoned: a late worker success must STOP
+  /// the session and must not leave `active` installed (B1).
+  fn load(&self, device_id: &str, request: MediaLoadRequest) -> Result<ActiveCastSession> {
+    self.load_request(device_id, request, None)
+  }
+
+  fn load_with_track(
+    &self,
+    device_id: &str,
+    request: MediaLoadRequest,
+    track: Arc<Mutex<CastTrack>>,
+  ) -> Result<ActiveCastSession> {
+    self.load_request(device_id, request, Some(track))
   }
 
   /// Set volume on the warm connection (0.0..=1.0).
@@ -1267,7 +1288,15 @@ fn worker_main(
           }
         }
       },
-      CastWorkerCmd::Load { request, reply, abandoned } => {
+      CastWorkerCmd::Load { request, track, reply, abandoned } => {
+        let request = track.map_or(request.clone(), |live_track| request.with_track(live_track.lock().clone()));
+        tracing::debug!(
+          device_id = %state.device_id,
+          title = ?request.track.title,
+          artist = ?request.track.artist,
+          album = ?request.track.album,
+          "Cast worker sending LOAD with resolved metadata"
+        );
         let load_result = state.with_hard_deadline(|s| s.handle_load(&request, &abandoned));
         // If the caller already abandoned, never deliver Ok (and ensure no active).
         let deliver = if abandoned.load(Ordering::Acquire) {
