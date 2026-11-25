@@ -62,6 +62,13 @@ impl Bridge {
       drop(devices);
       (track, media_key)
     };
+    tracing::debug!(
+      %device_id,
+      title = ?track.title,
+      artist = ?track.artist,
+      album = ?track.album,
+      "AirPlay now-playing metadata received for Cast"
+    );
     self.cast_pool.update_metadata(&media_key, track);
   }
 
