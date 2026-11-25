@@ -1541,6 +1541,17 @@ impl WorkerState {
     let media_session_id = session.media_session_id;
     let request_id = device.message_manager.generate_request_id().get();
     let body = request.queue_update_payload(request_id, media_session_id, item_id);
+    tracing::debug!(
+      device_id = %self.device_id,
+      request_id,
+      media_session_id,
+      item_id,
+      title = ?request.track.title,
+      artist = ?request.track.artist,
+      album = ?request.track.album,
+      payload = %body,
+      "Sending Cast QUEUE_UPDATE with now-playing metadata"
+    );
     let message = rust_cast::message_manager::CastMessage {
       namespace: MEDIA_NAMESPACE.to_owned(),
       source: "sender-0".to_owned(),
@@ -1550,9 +1561,22 @@ impl WorkerState {
     // The MEDIA_STATUS reply is left for the idle drain (it also feeds play/pause attribution).
     match device.message_manager.send(message) {
       Ok(()) => {
-        tracing::debug!(device_id = %self.device_id, media_session_id, item_id, "Cast metadata QUEUE_UPDATE sent");
+        tracing::debug!(
+          device_id = %self.device_id,
+          request_id,
+          media_session_id,
+          item_id,
+          "Cast metadata QUEUE_UPDATE written to connection"
+        );
       },
-      Err(err) => tracing::debug!(device_id = %self.device_id, error = %err, "Cast metadata QUEUE_UPDATE failed"),
+      Err(err) => tracing::warn!(
+        device_id = %self.device_id,
+        request_id,
+        media_session_id,
+        item_id,
+        error = %err,
+        "Cast metadata QUEUE_UPDATE write failed"
+      ),
     }
   }
 
