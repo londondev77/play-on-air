@@ -1289,7 +1289,10 @@ fn worker_main(
         }
       },
       CastWorkerCmd::Load { request, track, reply, abandoned } => {
-        let request = track.map_or(request.clone(), |live_track| request.with_track(live_track.lock().clone()));
+        let request = match track {
+          Some(live_track) => request.with_track(live_track.lock().clone()),
+          None => request,
+        };
         tracing::debug!(
           device_id = %state.device_id,
           title = ?request.track.title,
