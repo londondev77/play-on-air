@@ -384,8 +384,7 @@ impl Bridge {
       let request = match session.egress {
         EgressKind::FlacLive => MediaLoadRequest::flac(session.stream_url.clone(), CastStreamKind::Live),
         EgressKind::WavBuffered => MediaLoadRequest::wav(session.stream_url.clone(), CastStreamKind::Buffered),
-      }
-      ;
+      };
       let track = Arc::clone(&session.track);
       let last_volume = *session.last_volume_linear.lock();
       let plan = ReloadPlan {
